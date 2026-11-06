@@ -41,6 +41,12 @@
 
 namespace HP2Capture {
 
+// SDL may deliver queued events after a viewport replaces its window.
+inline bool IsCurrentWindowEvent(unsigned int EventWindow, unsigned int CurrentWindow)
+{
+	return CurrentWindow != 0 && EventWindow == CurrentWindow;
+}
+
 // What the caller must do to the grab state.
 enum EAction
 {
