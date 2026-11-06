@@ -51,6 +51,13 @@ static const EInputKey GJoyAxisKeys[USDLClient::MaxJoystickAxes] =
 // Hats fold onto buttons starting at IK_Joy13 once twelve real buttons exist.
 static const INT GHatButtonBase = 12;
 
+// Opt-in only: these records contain state, not key presses or pointer motion.
+static UBOOL MouseDiagnosticsEnabled()
+{
+	const char* Value = getenv("HP2_INPUT_DIAGNOSTICS");
+	return Value && strcmp(Value, "1") == 0;
+}
+
 // Window pixels per viewport pixel; identity until both sizes are known.
 static void UpdateMouseScale( USDLViewport& Viewport )
 {
@@ -368,6 +375,15 @@ void USDLViewport::UpdateInput( UBOOL Reset )
 	SDL_Event Event;
 	while( SDL_PollEvent(&Event) )
 	{
+		if( Event.type == SDL_WINDOWEVENT && MouseDiagnosticsEnabled() )
+		{
+			const Uint8 Kind = Event.window.event;
+			if( Kind == SDL_WINDOWEVENT_FOCUS_LOST || Kind == SDL_WINDOWEVENT_MINIMIZED || Kind == SDL_WINDOWEVENT_HIDDEN ||
+				Kind == SDL_WINDOWEVENT_FOCUS_GAINED || Kind == SDL_WINDOWEVENT_RESTORED || Kind == SDL_WINDOWEVENT_SHOWN )
+				debugf(NAME_Log, TEXT("InputCapture event=%i event_window=%u active_window=%u flags=%u grabbed=%i pending=%i configured=%i"),
+					(INT)Kind, Event.window.windowID, SdlWindow ? SDL_GetWindowID(SdlWindow) : 0,
+					SdlWindow ? SDL_GetWindowFlags(SdlWindow) : 0, (INT)MouseIsGrabbed, (INT)LostGrab, (INT)C->CaptureMouse);
+		}
 		switch( Event.type )
 		{
 			case SDL_KEYDOWN:
@@ -522,6 +538,10 @@ void* USDLViewport::GetWindow()
 void USDLViewport::SetMouseCapture( UBOOL Capture, UBOOL Clip, UBOOL FocusOnly )
 {
 	guard(USDLViewport::SetMouseCapture);
+	if( MouseDiagnosticsEnabled() )
+		debugf(NAME_Log, TEXT("InputCapture request=%i focus_only=%i window=%u flags=%u grabbed=%i pending=%i"),
+			(INT)Capture, (INT)FocusOnly, SdlWindow ? SDL_GetWindowID(SdlWindow) : 0,
+			SdlWindow ? SDL_GetWindowFlags(SdlWindow) : 0, (INT)MouseIsGrabbed, (INT)LostGrab);
 	if( !Capture )
 	{
 		// An explicit release cancels any grab deferred below while still
@@ -607,7 +627,11 @@ void USDLViewport::UpdateMouseGrabState( UBOOL Capture )
 	MouseIsGrabbed = Capture;
 	if( SdlWindow )
 		SDL_SetWindowGrab( SdlWindow, Capture ? SDL_TRUE : SDL_FALSE );
-	SDL_SetRelativeMouseMode( Capture ? SDL_TRUE : SDL_FALSE );
+	const int RelativeResult = SDL_SetRelativeMouseMode( Capture ? SDL_TRUE : SDL_FALSE );
+	if( MouseDiagnosticsEnabled() )
+		debugf(NAME_Log, TEXT("InputCapture transition=%i result=%i relative=%i window=%u flags=%u"),
+			(INT)Capture, RelativeResult, (INT)SDL_GetRelativeMouseMode(), SdlWindow ? SDL_GetWindowID(SdlWindow) : 0,
+			SdlWindow ? SDL_GetWindowFlags(SdlWindow) : 0);
 	// Releasing shows the cursor; grabbing hides it again.
 	SDL_ShowCursor( Capture ? SDL_DISABLE : SDL_ENABLE );
 	unguard;

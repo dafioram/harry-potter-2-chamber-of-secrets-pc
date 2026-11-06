@@ -23,7 +23,7 @@ struct HP2CrashReporterConfig
 	// Human-readable process label embedded in reports ("HarryPotter2", "UCC").
 	const char* ProcessName;
 	// Engine log filename under the user root (e.g. "HarryPotter2.log");
-	// its tail is embedded into every report.
+	// its tail is embedded on POSIX only if HP2_CRASH_INCLUDE_LOG_TAIL=1.
 	const char* LogFileBase;
 	// Optional wall-clock deadline from install time. 0 disables.
 	double WatchdogSeconds;
@@ -38,4 +38,8 @@ void HP2InstallCrashReporter( const struct HP2CrashReporterConfig* Config );
 // Override engine-log discovery with an explicit UTF-8 path. Call after
 // install once the launcher knows the real location. Setup-path only.
 void HP2SetCrashReporterLogHint( const char* Utf8Path );
+
+// Set a pre-existing writable directory before installing the reporter.
+// HP2_ARTIFACT_DIR, when set, takes precedence for isolated tests.
+void HP2SetCrashReporterDirectory( const char* Utf8Path );
 #endif // HP2CRASHREPORTER_H

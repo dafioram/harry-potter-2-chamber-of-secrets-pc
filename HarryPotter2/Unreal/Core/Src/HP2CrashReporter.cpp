@@ -47,6 +47,7 @@ namespace
 	volatile sig_atomic_t g_ReportWritten = 0;
 	volatile double g_WatchdogSeconds = 0.0;
 	volatile double g_InstallTime = 0.0;
+	bool g_IncludeLogTail = false;
 
 	char g_ArtifactDir[1024] = {0};
 	char g_ProcessName[128] = {0};
@@ -187,7 +188,7 @@ namespace
 			AppendSignalName( Signal );
 			AppendC( "\"" );
 		}
-		AppendEngineLogTail();
+		if( g_IncludeLogTail ) AppendEngineLogTail();
 
 		// Frame addresses for offline symbolication (atos).
 		if( Signal == SIGSEGV || Signal == SIGBUS || Signal == SIGILL || Signal == SIGFPE || Signal == SIGABRT )
@@ -202,7 +203,9 @@ namespace
 			for( int I = 0; I < Count; ++I )
 			{
 				if( I ) AppendC( "," );
+				AppendC( "\"" );
 				AppendHex( (uintptr_t)Frames[I] );
+				AppendC( "\"" );
 			}
 			AppendC( "]" );
 		}
@@ -287,6 +290,8 @@ void HP2InstallCrashReporter( const HP2CrashReporterConfig* Config )
 	if( FirstInstall )
 	{
 		g_Installed = 1;
+		const char* IncludeLog = getenv("HP2_CRASH_INCLUDE_LOG_TAIL");
+		g_IncludeLogTail = IncludeLog && strcmp(IncludeLog, "1") == 0;
 
 		if( Config )
 		{
@@ -357,31 +362,80 @@ void HP2SetCrashReporterLogHint( const char* Utf8Path )
 	MemCopy( g_LogHint, Utf8Path, N );
 	g_LogHint[N] = 0;
 }
+void HP2SetCrashReporterDirectory( const char* Utf8Path )
+{
+	const char* ArtifactDir = getenv("HP2_ARTIFACT_DIR");
+	const char* Path = ArtifactDir && *ArtifactDir ? ArtifactDir : Utf8Path;
+	if( !Path ) return;
+	size_t N = StrLen(Path);
+	if( N >= sizeof(g_ArtifactDir) ) return;
+	MemCopy(g_ArtifactDir, Path, N);
+	g_ArtifactDir[N] = 0;
+	g_ReportPath[0] = 0;
+}
 #else
 namespace
 {
 	volatile LONG g_WindowsCrashInstalled = 0;
-	char g_WindowsArtifactDir[MAX_PATH] = ".";
+	volatile LONG g_WindowsReporting = 0;
+	wchar_t g_WindowsReportPath[32768] = L"crash-report.json";
 	char g_WindowsProcess[128] = "unknown";
 	double g_WindowsWatchdogSeconds = 0;
 	std::chrono::steady_clock::time_point g_WindowsStart;
 
-	void WriteWindowsCrash(const char* Reason)
+	void WriteWindowsCrash(const char* Reason, EXCEPTION_POINTERS* Exception = nullptr)
 	{
-		char Path[MAX_PATH];
-		snprintf(Path, sizeof(Path), "%s\\crash-report.json", g_WindowsArtifactDir);
-		FILE* F = fopen(Path, "wb");
-		if (F)
+		if (InterlockedCompareExchange(&g_WindowsReporting, 1, 0) != 0) return;
+		// Do not unwind or call a symbolizer in a damaged process. The saved
+		// exception address is useful even for a stack-overflow exception.
+		static char Report[1024];
+		const unsigned long Code = Exception && Exception->ExceptionRecord
+			? Exception->ExceptionRecord->ExceptionCode : 0;
+		const unsigned long long Address = Exception && Exception->ExceptionRecord
+			? reinterpret_cast<unsigned long long>(Exception->ExceptionRecord->ExceptionAddress) : 0;
+		MEMORY_BASIC_INFORMATION Info = {};
+		unsigned long long ModuleOffset = 0;
+		char Module[MAX_PATH] = "unknown";
+		if (Address && VirtualQuery(reinterpret_cast<const void*>(Address), &Info, sizeof(Info)) == sizeof(Info))
 		{
-			fprintf(F, "{\"format\":\"hp2-crash\",\"schema_version\":1,\"exit_reason\":\"signal\",\"reason_code\":\"%s\",\"process\":\"%s\",\"frames\":[]}\n", Reason, g_WindowsProcess);
-			fclose(F);
+			ModuleOffset = Address - reinterpret_cast<unsigned long long>(Info.AllocationBase);
+			char Path[MAX_PATH];
+			const DWORD Size = GetModuleFileNameA(static_cast<HMODULE>(Info.AllocationBase), Path, MAX_PATH);
+			if (Size && Size < MAX_PATH)
+			{
+				const char* Name = strrchr(Path, '\\');
+				Name = Name ? Name + 1 : Path;
+				size_t I = 0;
+				for (; Name[I] && I + 1 < sizeof(Module); ++I)
+				{
+					const unsigned char C = static_cast<unsigned char>(Name[I]);
+					Module[I] = (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') ||
+						(C >= '0' && C <= '9') || C == '.' || C == '-' || C == '_' ? C : '_';
+				}
+				Module[I] = 0;
+			}
 		}
-		fprintf(stderr, "HP2_CRASH %s %s\n", Reason, Path);
+		const int Length = snprintf(Report, sizeof(Report),
+			"{\"format\":\"hp2-crash\",\"schema_version\":1,\"exit_reason\":\"signal\",\"reason_code\":\"%s\",\"process\":\"%s\",\"exception_code\":\"0x%08lx\",\"exception_address\":\"0x%llx\",\"module\":\"%s\",\"module_offset\":\"0x%llx\",\"frames\":[]}\n",
+			Reason, g_WindowsProcess, Code, Address, Module, ModuleOffset);
+		HANDLE File = CreateFileW(g_WindowsReportPath, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		bool WroteReport = false;
+		if (File != INVALID_HANDLE_VALUE)
+		{
+			DWORD Written = 0;
+			if (Length > 0 && static_cast<size_t>(Length) < sizeof(Report))
+				WroteReport = WriteFile(File, Report, static_cast<DWORD>(Length), &Written, NULL)
+					&& Written == static_cast<DWORD>(Length);
+			CloseHandle(File);
+		}
+		fprintf(stderr, "HP2_CRASH %s %ls %s\n", Reason, g_WindowsReportPath,
+			WroteReport ? "written" : "write-failed");
 		fflush(stderr);
 	}
-	LONG WINAPI WindowsException(EXCEPTION_POINTERS*)
+	LONG WINAPI WindowsException(EXCEPTION_POINTERS* Exception)
 	{
-		WriteWindowsCrash("crash.exception");
+		WriteWindowsCrash("crash.exception", Exception);
 		return EXCEPTION_EXECUTE_HANDLER;
 	}
 	void Watchdog()
@@ -396,12 +450,9 @@ namespace
 void HP2InstallCrashReporter(const HP2CrashReporterConfig* Config)
 {
 	if (InterlockedCompareExchange(&g_WindowsCrashInstalled, 1, 0) != 0) return;
-	const char* ArtifactDir = getenv("HP2_ARTIFACT_DIR");
-	if (ArtifactDir && *ArtifactDir)
-	{
-		strncpy(g_WindowsArtifactDir, ArtifactDir, sizeof(g_WindowsArtifactDir) - 1);
-		g_WindowsArtifactDir[sizeof(g_WindowsArtifactDir) - 1] = 0;
-	}
+	HP2SetCrashReporterDirectory(nullptr);
+	ULONG StackGuarantee = 64 * 1024;
+	SetThreadStackGuarantee(&StackGuarantee);
 	if (Config)
 	{
 		if (Config->ProcessName)
@@ -419,4 +470,21 @@ void HP2InstallCrashReporter(const HP2CrashReporterConfig* Config)
 	fputs("HP2_CRASH installed\n", stderr);
 }
 void HP2SetCrashReporterLogHint(const char*) {}
+void HP2SetCrashReporterDirectory(const char* Utf8Path)
+{
+	wchar_t Directory[32768];
+	const DWORD EnvironmentLength = GetEnvironmentVariableW(L"HP2_ARTIFACT_DIR", Directory,
+		static_cast<DWORD>(sizeof(Directory) / sizeof(Directory[0])));
+	int Count = 0;
+	if (EnvironmentLength && EnvironmentLength < sizeof(Directory) / sizeof(Directory[0]))
+		Count = static_cast<int>(EnvironmentLength) + 1;
+	else if (!EnvironmentLength && Utf8Path && *Utf8Path)
+		Count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Utf8Path, -1,
+			Directory, static_cast<int>(sizeof(Directory) / sizeof(Directory[0])));
+	if (Count <= 0 || Count + 19 >= static_cast<int>(sizeof(g_WindowsReportPath) / sizeof(g_WindowsReportPath[0]))) return;
+	wcscpy(g_WindowsReportPath, Directory);
+	if (Count > 1 && Directory[Count-2] != L'\\' && Directory[Count-2] != L'/')
+		wcscat(g_WindowsReportPath, L"\\");
+	wcscat(g_WindowsReportPath, L"crash-report.json");
+}
 #endif

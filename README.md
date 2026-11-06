@@ -148,6 +148,7 @@ Put it behind HTTPS on a stable address. Browser saves belong to the exact origi
 - **The launcher says game data is missing:** select the installed game folder containing `Maps`, `System`, and `Textures`, the game CD, or the CD's `.iso` file. If the `.iso` is currently open as a disc on your computer, eject it first.
 - **A browser says it cannot start:** make sure you opened the HTTPS tunnel link, not the host's plain `http://` address. Use a browser that supports WebAssembly Memory64, WebGL2, and cross-origin isolation.
 - **Where are saves stored?** The desktop game keeps saves in your normal user data folder. Browser saves stay in the browser's storage on the device where you played.
+- **Looking for a crash report or input log?** See [local diagnostics](Docs/DIAGNOSTICS.md). Review logs for personal information before sharing them.
 - **Need help?** Open an [issue](https://github.com/cefege/harry-potter-2-chamber-of-secrets-pc/issues) and include your operating system and the steps that caused the problem. Do not upload copyrighted game files.
 
 ## Contributions
