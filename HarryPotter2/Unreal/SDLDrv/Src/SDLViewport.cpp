@@ -456,6 +456,10 @@ void USDLViewport::UpdateInput( UBOOL Reset )
 			}
 			case SDL_WINDOWEVENT:
 			{
+				// Events queued while replacing the viewport may still refer to
+				// the old window. They must not release the new window's grab.
+				if( !HP2Capture::IsCurrentWindowEvent( Event.window.windowID, SdlWindow ? SDL_GetWindowID(SdlWindow) : 0 ) )
+					break;
 				const Uint8 Kind = Event.window.event;
 				const UBOOL bLoss    = Kind == SDL_WINDOWEVENT_FOCUS_LOST || Kind == SDL_WINDOWEVENT_MINIMIZED || Kind == SDL_WINDOWEVENT_HIDDEN;
 				const UBOOL bRestore = Kind == SDL_WINDOWEVENT_FOCUS_GAINED || Kind == SDL_WINDOWEVENT_RESTORED || Kind == SDL_WINDOWEVENT_SHOWN;
