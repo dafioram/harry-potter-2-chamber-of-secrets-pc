@@ -489,6 +489,22 @@ int TestMouseCapturePolicy()
 {
 	GFailureStage = "capture.policy";
 
+	// Continue can replace window 1 with window 2 while old focus/hide
+	// events are still queued. Only the active window may affect capture.
+	if( HP2Capture::IsCurrentWindowEvent( 1, 2 ) ||
+		HP2Capture::IsCurrentWindowEvent( 1, 0 ) ||
+		!HP2Capture::IsCurrentWindowEvent( 2, 2 ) )
+		Fail( "window-event ownership did not reject a stale or missing window" );
+	{
+		const HP2Capture::FState Grabbed = { true, false, true };
+		const HP2Capture::EAction StaleLoss = HP2Capture::IsCurrentWindowEvent( 1, 2 )
+			? HP2Capture::OnLoss( Grabbed ).Action : HP2Capture::Action_None;
+		const HP2Capture::EAction CurrentLoss = HP2Capture::IsCurrentWindowEvent( 2, 2 )
+			? HP2Capture::OnLoss( Grabbed ).Action : HP2Capture::Action_None;
+		if( StaleLoss != HP2Capture::Action_None || CurrentLoss != HP2Capture::Action_Release )
+			Fail( "stale loss must not release capture; current loss must release it" );
+	}
+
 	struct FLossRow
 	{
 		const char* Name;
