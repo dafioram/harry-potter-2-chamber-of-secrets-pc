@@ -133,7 +133,9 @@ struct LauncherFlowResult
 {
 	bool RunEngine = false;
 	FString EnginePrefix;
+	const TCHAR* DataSelection = TEXT("unknown");
 };
+static const TCHAR* GHP2DataSelection = TEXT("unknown");
 
 // Resolves one playable data root, honoring the explicit -datadir override,
 // the stored launcher catalog, and conventional-import discovery in that
@@ -342,6 +344,8 @@ struct FLauncherRound
 		}
 
 		const DataSource FinalSource = Result.dataSources.selected;
+		Outcome.DataSelection = HasOverride ? TEXT("explicit") :
+			(FinalSource == DataSource::Retail ? TEXT("retail-selected") : TEXT("prototype-selected"));
 		if (FinalSource != SelectedSource
 			&& !PrepareDataSourceProfile(LauncherRoot, FinalSource, ProfileRoot, StepError))
 		{
@@ -5868,6 +5872,11 @@ static int HP2BootAfterLauncher(
 			&FileManager,
 			FConfigCacheIni::Factory,
 			1 );
+		const FString DiagnosticVersion(ANSI_TO_TCHAR(HP2_BUILD_VERSION));
+		const FString DiagnosticRevision(ANSI_TO_TCHAR(HP2_BUILD_REVISION));
+		const FString DiagnosticPlatform(ANSI_TO_TCHAR(SDL_GetPlatform()));
+		debugf(NAME_Init, TEXT("Diagnostics: version=%s revision=%s platform=%s data_selection=%s"),
+			*DiagnosticVersion, *DiagnosticRevision, *DiagnosticPlatform, GHP2DataSelection);
 
 
 
@@ -6144,9 +6153,15 @@ int main( int ArgC, char* ArgV[] )
 	if( !Bootstrap.Installed && !ShouldRunNativeLauncher( ArgC, ArgV ) )
 		return 1;
 
-	// Crash reporter: signal handlers plus atexit marker; watchdog unused
-	// here. Writes crash-report.json (frames + log tail) into the working
-	// directory, prints "HP2_CRASH <code> <path>" on stderr, then re-raises.
+	// Resolve a stable writable report location before the engine changes its
+	// working directory. Test runs may override it via HP2_ARTIFACT_DIR.
+	std::string CrashDirectory, CrashDirectoryError;
+	if( PrepareHP2LauncherHome(CrashDirectory, CrashDirectoryError) )
+		HP2SetCrashReporterDirectory(CrashDirectory.c_str());
+	else
+		HP2SetCrashReporterDirectory(NULL);
+
+	// Crash reporter: signal handlers plus atexit marker; watchdog unused.
 	HP2CrashReporterConfig CrashConfig = {};
 	CrashConfig.ProcessName = "hp2_game";
 	CrashConfig.LogFileBase = "HarryPotter2.log";
@@ -6170,6 +6185,7 @@ int main( int ArgC, char* ArgV[] )
 	const FString ForwardedArguments = ForwardedCommandLine( ArgC, ArgV );
 	FString EngineCommandLine = ForwardedArguments;
 	const bool ShowLauncher = ShouldRunNativeLauncher( ArgC, ArgV );
+	if( HasOverride ) GHP2DataSelection = TEXT("explicit");
 
 #if defined(__EMSCRIPTEN__)
 	if( ShowLauncher )
@@ -6207,6 +6223,7 @@ int main( int ArgC, char* ArgV[] )
 		LauncherFlowResult Outcome;
 		if( !RunNativeLauncherRound( ArgC, ArgV, HasOverride, OverrideRoot, Outcome ) )
 			return 0;
+		GHP2DataSelection = Outcome.DataSelection;
 		EngineCommandLine = Outcome.EnginePrefix.Len()
 			? Outcome.EnginePrefix + TEXT(" ") + ForwardedArguments
 			: ForwardedArguments;

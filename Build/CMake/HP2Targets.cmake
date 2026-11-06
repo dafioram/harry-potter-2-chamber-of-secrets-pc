@@ -308,6 +308,27 @@ hp2_add_executable(hp2_game
     ${HP2_STATIC_PACKAGE_SOURCE}
     ${HP2_PATH_SOURCE}
 )
+execute_process(
+    COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    RESULT_VARIABLE HP2_REVISION_RESULT
+    OUTPUT_VARIABLE HP2_BUILD_REVISION
+    ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(NOT HP2_REVISION_RESULT STREQUAL "0" OR NOT HP2_BUILD_REVISION MATCHES "^[0-9a-fA-F]+$")
+    set(HP2_BUILD_REVISION "unknown")
+else()
+    execute_process(COMMAND git diff --quiet HEAD --
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" RESULT_VARIABLE HP2_DIRTY_RESULT
+        ERROR_QUIET)
+    if(HP2_DIRTY_RESULT STREQUAL "1")
+        string(APPEND HP2_BUILD_REVISION "-dirty")
+    elseif(NOT HP2_DIRTY_RESULT STREQUAL "0")
+        string(APPEND HP2_BUILD_REVISION "-status-unknown")
+    endif()
+endif()
+target_compile_definitions(hp2_game PRIVATE
+    HP2_BUILD_VERSION="${PROJECT_VERSION}" HP2_BUILD_REVISION="${HP2_BUILD_REVISION}")
 target_compile_definitions(hp2_game PRIVATE HP2_WITH_CLIENT_PACKAGES=1)
 if(WIN32)
     set(HP2_WINDOWS_ICON_PATH "${HP2_UNREAL_ROOT}/WinDrv/Src/Res/Game.ico")
@@ -513,6 +534,10 @@ target_link_libraries(hp2_input_contract_tests PRIVATE
 )
 if(WIN32)
     target_link_libraries(hp2_input_contract_tests PRIVATE SDL2::SDL2main)
+    hp2_add_executable(hp2_windows_crash_probe
+        "${PROJECT_SOURCE_DIR}/Tests/WindowsCrashProbe.cpp"
+    )
+    target_link_libraries(hp2_windows_crash_probe PRIVATE hp2_core)
 endif()
 if(HP2_HAS_NATIVE_TEXT_BACKEND)
     hp2_add_executable(hp2_native_typography_tests
@@ -570,6 +595,9 @@ set(HP2_EXECUTABLE_TARGETS
 )
 if(TARGET hp2_import)
     list(APPEND HP2_EXECUTABLE_TARGETS hp2_import)
+endif()
+if(TARGET hp2_windows_crash_probe)
+    list(APPEND HP2_EXECUTABLE_TARGETS hp2_windows_crash_probe)
 endif()
 
 if(HP2_HAS_NATIVE_TEXT_BACKEND)
@@ -852,6 +880,11 @@ if(HP2_TEST_DATA_PRESENT)
     )
 endif()
 hp2_add_behavior_test(native_launcher_contract hp2_launcher_tests)
+if(TARGET hp2_windows_crash_probe)
+    hp2_add_behavior_test(windows_crash_report "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/Tests/WindowsCrashReporterTests.py"
+        "$<TARGET_FILE:hp2_windows_crash_probe>")
+endif()
 hp2_add_behavior_test(data_identity_contracts hp2_data_identity_tests)
 hp2_add_behavior_test(game_test_contract "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/Tests/GameTestTests.py"
