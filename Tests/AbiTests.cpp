@@ -184,6 +184,14 @@ namespace
 			return Fail("16:9 menu UI did not fit the authored 640x480 height");
 		if (UGameEngine::GetConsoleUIScale(1280.f, 1024.f, 1.f) != 2.f)
 			return Fail("5:4 menu UI did not fit the authored 640x480 width");
+		if (UGameEngine::GetConsoleRootUIScale(1920.f, 1080.f, 1080.f, 810.f, 0.75f) != 1.6875f)
+			return Fail("75 percent menu scale must not be applied twice");
+		if (UGameEngine::GetConsoleRootUIScale(1280.f, 720.f, 720.f, 540.f, 0.75f) != 1.125f)
+			return Fail("75 percent windowed menu scale must use the full viewport");
+		if (UGameEngine::GetConsoleRootUIScale(1920.f, 1080.f, 1440.f, 1080.f, 1.f) != 2.25f)
+			return Fail("100 percent menu scale changed");
+		if (UGameEngine::GetConsoleRootUIScale(1920.f, 1080.f, 1920.f, 1080.f, 1.5f) != 3.375f)
+			return Fail("above-100-percent behavior must remain unchanged");
 		return 0;
 	}
 	int TestCommandLineLoad()
